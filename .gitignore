@@ -39,6 +39,7 @@
 *.x86_64
 *.hex
 type
+editor
 
 # Debug files
 *.dSYM/

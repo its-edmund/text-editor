@@ -1,2 +1,2 @@
-type: type.c
-	$(CC) type.c -o type -Wall -Wextra -pedantic -std=c99 -g
+type: editor.c
+	$(CC) editor.c append_buffer.c -o editor -Wall -Wextra -pedantic -std=c99 -g
