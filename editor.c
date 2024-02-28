@@ -161,7 +161,7 @@ void editorRefreshScreen() {
   } else {
     write(STDOUT_FILENO, "\033[2 q", 5);
   }
-  len = asprintf(&cursor_position, "\033[%d;%dH\n", state.cursorY, state.cursorX);
+  len = asprintf(&cursor_position, "\033[%d;%dH", state.cursorY, state.cursorX);
   write(STDOUT_FILENO, cursor_position, len);
 
   ab_free(&ab);
@@ -193,17 +193,17 @@ void process_keypress() {
         ab_reset(state.info);
         break;
       case 'j':
-        if (state.cursorY < state.num_rows - 1) {
+        if (state.cursorY < state.num_rows) {
           state.cursorY++;
         }
         break;
       case 'k':
-        if (state.cursorY > 0) {
+        if (state.cursorY > 1) {
           state.cursorY--;
         }
         break;
       case 'h':
-        if (state.cursorX > 0) {
+        if (state.cursorX > 4) {
           state.cursorX--;
         }
         break;
