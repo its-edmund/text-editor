@@ -19,19 +19,25 @@ enum editorMode {
   COMMAND
 };
 
-struct EditorRow {
-  ssize_t size;
-  char *content;
+// struct EditorRow {
+//   ssize_t size;
+//   char *content;
+// };
+//
+struct Cursor {
+  int x;
+  int y;
+  int previous_x;
 };
+
 
 struct EditorConfig {
   struct termios term;
-  struct EditorRow *rows;
+  AppendBuffer *rows;
   AppendBuffer *info;
+  struct Cursor *cursor;
   enum editorMode mode;
   int num_rows;
-  int cursorX;
-  int cursorY;
   int window_height;
   int window_width;
 };
@@ -78,22 +84,22 @@ void enable_raw_mode() {
 }
 
 void editor_append_row(char *s, ssize_t len) {
-  state.rows = realloc(state.rows, sizeof(struct EditorRow) * (state.num_rows + 1));
+  state.rows = realloc(state.rows, sizeof(AppendBuffer) * (state.num_rows + 1));
 
   if (state.rows == NULL) {
     die("Realloc failed");
   }
 
   int at = state.num_rows;
-  state.rows[at].size = len;
-  state.rows[at].content = malloc(len + 1);
-  memcpy(state.rows[at].content, s, len);
-  state.rows[at].content[len] = '\0';
+  state.rows[at].len = (int) len;
+  state.rows[at].buffer = malloc(len + 1);
+  memcpy(state.rows[at].buffer, s, len);
+  state.rows[at].buffer[len] = '\0';
   state.num_rows++;
 }
 
 void editor_draw_rows(AppendBuffer *ab) {
-  struct EditorRow *row;
+  AppendBuffer *row;
   ssize_t row_number;
   
   for (row_number = 0; row_number < state.window_height; row_number++) {
@@ -101,10 +107,12 @@ void editor_draw_rows(AppendBuffer *ab) {
       row = &state.rows[row_number];
       char *line = NULL;
       int size;
-      size = asprintf(&line, "%d  %s\r\n", (int) row_number + 1, row->content);
+      size = asprintf(&line, "%d  %s\r\n", (int) row_number + 1, row->buffer);
       ab_append(ab, line, size);
     } else if (row_number == state.window_height - 1) {
-      if (state.mode == NORMAL) {
+      if (state.info->len > 0) {
+        ab_append(ab, state.info->buffer, 6);
+      } else if (state.mode == NORMAL) {
         ab_append(ab, "NORMAL", 6);
       } else if (state.mode == INSERT) {
         ab_append(ab, "INSERT", 6);
@@ -137,8 +145,8 @@ void editor_open(char *path) {
     editor_append_row(line, size);
   }
 
-  state.cursorY = state.num_rows - 1;
-  state.cursorX = (int) state.rows[state.num_rows - 1].size + 2;
+  state.cursor->y = state.num_rows - 1;
+  state.cursor->x = (int) state.rows[state.num_rows - 1].len + 2;
 
   fclose(f);
   if (line) {
@@ -146,7 +154,7 @@ void editor_open(char *path) {
   }
 }
 
-void editorRefreshScreen() {
+void editor_refresh_screen() {
   AppendBuffer ab = APPEND_BUFFER_INIT;
 
   ab_append(&ab, "\x1b[2J", 4);
@@ -161,7 +169,7 @@ void editorRefreshScreen() {
   } else {
     write(STDOUT_FILENO, "\033[2 q", 5);
   }
-  len = asprintf(&cursor_position, "\033[%d;%dH", state.cursorY, state.cursorX);
+  len = asprintf(&cursor_position, "\033[%d;%dH", state.cursor->y + 1, state.cursor->x + 4);
   write(STDOUT_FILENO, cursor_position, len);
 
   ab_free(&ab);
@@ -193,23 +201,35 @@ void process_keypress() {
         ab_reset(state.info);
         break;
       case 'j':
-        if (state.cursorY < state.num_rows) {
-          state.cursorY++;
+        if (state.cursor->y < state.num_rows - 1) {
+          if (state.rows[state.cursor->y + 1].len < state.cursor->previous_x) {
+            state.cursor->x = state.rows[state.cursor->y + 1].len;
+          } else {
+            state.cursor->x = state.cursor->previous_x;
+          }
+          state.cursor->y++;
         }
         break;
       case 'k':
-        if (state.cursorY > 1) {
-          state.cursorY--;
+        if (state.cursor->y > 0) {
+          if (state.rows[state.cursor->y - 1].len < state.cursor->previous_x) {
+            state.cursor->x = state.rows[state.cursor->y - 1].len;
+          } else {
+            state.cursor->x = state.cursor->previous_x;
+          }
+          state.cursor->y--;
         }
         break;
       case 'h':
-        if (state.cursorX > 4) {
-          state.cursorX--;
+        if (state.cursor->x > 0) {
+          state.cursor->x--;
+          state.cursor->previous_x = state.cursor->x;
         }
         break;
       case 'l':
-        if (state.cursorX < state.window_width) {
-          state.cursorX++;
+        if (state.cursor->x < state.rows[state.cursor->y].len) {
+          state.cursor->x++;
+          state.cursor->previous_x = state.cursor->x;
         }
         break;
     }
@@ -218,9 +238,19 @@ void process_keypress() {
       case '\033':
         state.mode = NORMAL;
         break;
+      default:
+        ab_append(&state.rows[state.cursor->y - 1], (const char[2]) {c, '\0'}, 1);
+        break;
     }
   } else if (state.mode == COMMAND) {
     switch (c) {
+      case '\n':
+        ab_reset(state.info);
+        break;
+      case '\033':
+        state.mode = NORMAL;
+        ab_reset(state.info);
+        break;
       default:
         ab_append(state.info, (const char[2]) {c, '\0'}, 1);
         break;
@@ -239,12 +269,15 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
-  state.cursorX = 0;
-  state.cursorY = 0;
   state.num_rows = 0;
   state.rows = NULL;
+  state.cursor = malloc(sizeof(struct Cursor));
+  state.cursor->x = 0;
+  state.cursor->y = 0;
+  state.cursor->previous_x = 0;
   state.info = malloc(sizeof(AppendBuffer));
-  state.info->buffer = "";
+  state.info->buffer = malloc(1);
+  state.info->buffer[0] = '\0';
   state.info->len = 0;
   state.mode = NORMAL;
 
@@ -253,7 +286,7 @@ int main(int argc, char *argv[]) {
   getScreenSize(&state.window_height, &state.window_width);
 
   while (1) {
-    editorRefreshScreen();
+    editor_refresh_screen();
     process_keypress();
   }
 

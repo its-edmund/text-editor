@@ -20,6 +20,7 @@ void ab_free(AppendBuffer *ab) {
 }
 
 void ab_reset(AppendBuffer *ab) {
-  ab->buffer = "";
+  ab->buffer = realloc(ab->buffer, 1);
+  ab->buffer[0] = '\0';
   ab->len = 0;
 }
